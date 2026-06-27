@@ -47,6 +47,13 @@ class MusicPlayer:
             self.has_warned_no_tracks = True
         return False
 
+    @property
+    def current_track_name(self):
+        if not self.tracks:
+            return ""
+
+        return self.tracks[self.current_track_index].name
+
     def _play_current_track(self):
         current_track = self.tracks[self.current_track_index]
         pygame.mixer.music.load(str(current_track))
