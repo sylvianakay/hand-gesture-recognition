@@ -4,6 +4,7 @@ import csv
 import copy
 import argparse
 import itertools
+import time
 from collections import Counter
 from collections import deque
 
@@ -14,6 +15,7 @@ import mediapipe as mp
 from utils import CvFpsCalc
 from model import KeyPointClassifier
 from model import PointHistoryClassifier
+from music_player import MusicPlayer
 
 
 def get_args():
@@ -85,12 +87,17 @@ def main():
             row[0] for row in point_history_classifier_labels
         ]
 
+    music_player = MusicPlayer()
+    last_music_action = {}
+    music_action_cooldown = 1.0
+
     # FPS Measurement ########################################################
     cvFpsCalc = CvFpsCalc(buffer_len=10)
 
     # Coordinate history #################################################################
     history_length = 16
     point_history = deque(maxlen=history_length)
+    index_tip_history = deque(maxlen=10)
 
     # Finger gesture history ################################################
     finger_gesture_history = deque(maxlen=history_length)
@@ -141,6 +148,7 @@ def main():
 
                 # Hand sign classification
                 hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+                index_tip_history.append(landmark_list[8])
                 if hand_sign_id == 2:  # Point gesture
                     point_history.append(landmark_list[8])
                 else:
@@ -157,6 +165,21 @@ def main():
                 finger_gesture_history.append(finger_gesture_id)
                 most_common_fg_id = Counter(
                     finger_gesture_history).most_common()
+                hand_sign_label = keypoint_classifier_labels[hand_sign_id]
+                finger_gesture_label = point_history_classifier_labels[
+                    most_common_fg_id[0][0]]
+                handle_music_controls(
+                    music_player,
+                    hand_sign_label,
+                    finger_gesture_label,
+                    landmark_list,
+                    point_history,
+                    index_tip_history,
+                    debug_image.shape[1],
+                    debug_image.shape[0],
+                    last_music_action,
+                    music_action_cooldown,
+                )
 
                 # Drawing part
                 debug_image = draw_bounding_rect(use_brect, debug_image, brect)
@@ -165,11 +188,12 @@ def main():
                     debug_image,
                     brect,
                     handedness,
-                    keypoint_classifier_labels[hand_sign_id],
-                    point_history_classifier_labels[most_common_fg_id[0][0]],
+                    hand_sign_label,
+                    finger_gesture_label,
                 )
         else:
             point_history.append([0, 0])
+            index_tip_history.clear()
 
         debug_image = draw_point_history(debug_image, point_history)
         debug_image = draw_info(debug_image, fps, mode, number)
@@ -178,6 +202,7 @@ def main():
         cv.imshow('Hand Gesture Recognition', debug_image)
 
     cap.release()
+    music_player.stop()
     cv.destroyAllWindows()
 
 
@@ -192,6 +217,97 @@ def select_mode(key, mode):
     if key == 104:  # h
         mode = 2
     return number, mode
+
+
+def handle_music_controls(music_player, hand_sign_label, finger_gesture_label,
+                          landmark_list, point_history, index_tip_history,
+                          image_width, image_height, last_action,
+                          cooldown_seconds):
+    now = time.time()
+
+    def can_run(action):
+        if now - last_action.get(action, 0) < cooldown_seconds:
+            return False
+        last_action[action] = now
+        return True
+
+    can_swipe_tracks = is_pointing_hand(landmark_list)
+    swipe_direction = None
+    if can_swipe_tracks:
+        swipe_direction = detect_swipe(index_tip_history, image_width,
+                                       image_height)
+    if swipe_direction == "right" and can_run("next"):
+        music_player.next_track()
+        index_tip_history.clear()
+        point_history.clear()
+        print("Swipe right: next track")
+        return
+    if swipe_direction == "left" and can_run("previous"):
+        music_player.previous_track()
+        index_tip_history.clear()
+        point_history.clear()
+        print("Swipe left: previous track")
+        return
+
+    is_swiping = can_swipe_tracks and is_horizontal_motion(index_tip_history,
+                                                           image_width)
+    if not is_swiping and hand_sign_label == "Open" and can_run("play"):
+        music_player.play()
+    elif not is_swiping and hand_sign_label == "Close" and can_run("pause"):
+        music_player.pause()
+
+    if hand_sign_label == "Pointer":
+        if finger_gesture_label == "Clockwise" and can_run("next"):
+            music_player.next_track()
+        elif finger_gesture_label == "Counter Clockwise" and can_run("previous"):
+            music_player.previous_track()
+
+    if landmark_list:
+        wrist_y = landmark_list[0][1]
+        volume = 1.0 - (wrist_y / image_height)
+        music_player.set_volume(volume)
+
+
+def detect_swipe(index_tip_history, image_width, image_height):
+    valid_points = [
+        point for point in index_tip_history if point[0] != 0 or point[1] != 0
+    ]
+    if len(valid_points) < 6:
+        return None
+
+    recent_points = valid_points[-6:]
+    start_x, start_y = recent_points[0]
+    end_x, end_y = recent_points[-1]
+    dx = end_x - start_x
+    dy = end_y - start_y
+
+    swipe_threshold = image_width * 0.08
+    vertical_limit = image_height * 0.40
+
+    if abs(dx) < swipe_threshold or abs(dy) > vertical_limit:
+        return None
+
+    return "right" if dx > 0 else "left"
+
+
+def is_pointing_hand(landmark_list):
+    if len(landmark_list) <= 20:
+        return False
+
+    index_extended = landmark_list[8][1] < landmark_list[6][1]
+    middle_folded = landmark_list[12][1] > landmark_list[10][1]
+    ring_folded = landmark_list[16][1] > landmark_list[14][1]
+    pinky_folded = landmark_list[20][1] > landmark_list[18][1]
+    return index_extended and middle_folded and ring_folded and pinky_folded
+
+
+def is_horizontal_motion(index_tip_history, image_width):
+    if len(index_tip_history) < 4:
+        return False
+
+    recent_points = list(index_tip_history)[-4:]
+    dx = recent_points[-1][0] - recent_points[0][0]
+    return abs(dx) > image_width * 0.035
 
 
 def calc_bounding_rect(image, landmarks):
