@@ -16,6 +16,7 @@ from model import KeyPointClassifier
 from model import PointHistoryClassifier
 from gesture_controller import GestureController
 from music_player import MusicPlayer
+from spotify_controller import SpotifyController
 from visualizer import TechnoVisualizer
 
 
@@ -25,6 +26,10 @@ def get_args():
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--width", help='cap width', type=int, default=960)
     parser.add_argument("--height", help='cap height', type=int, default=540)
+    parser.add_argument("--player",
+                        choices=["local", "spotify"],
+                        default="local",
+                        help="music backend to control")
 
     parser.add_argument('--use_static_image_mode', action='store_true')
     parser.add_argument("--min_detection_confidence",
@@ -48,6 +53,7 @@ def main():
     cap_device = args.device
     cap_width = args.width
     cap_height = args.height
+    player_type = args.player
 
     use_static_image_mode = args.use_static_image_mode
     min_detection_confidence = args.min_detection_confidence
@@ -88,7 +94,10 @@ def main():
             row[0] for row in point_history_classifier_labels
         ]
 
-    music_player = MusicPlayer()
+    if player_type == "spotify":
+        music_player = SpotifyController()
+    else:
+        music_player = MusicPlayer()
     gesture_controller = GestureController(music_player)
     visualizer = TechnoVisualizer(width=cap_width, height=cap_height)
 

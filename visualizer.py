@@ -45,7 +45,6 @@ class TechnoVisualizer:
         if pinch > 0.72 and not self.pinch_closed:
             self.drop_started_at = elapsed
             self.pinch_closed = True
-            print("Drop flash")
         elif pinch < 0.45:
             self.pinch_closed = False
 
@@ -81,8 +80,8 @@ class TechnoVisualizer:
 
     def _draw_white_contours(self, frame, elapsed, pulse, volume, pinch,
                              hand_position, drop):
-        line_count = 54
-        point_count = 170
+        line_count = 42
+        point_count = 96
         spacing = self.width / (line_count + 1)
         hand_x = self.width * 0.5
         hand_y = self.height * 0.5
@@ -97,17 +96,21 @@ class TechnoVisualizer:
 
         for line_index in range(line_count):
             base_x = spacing * (line_index + 1)
+            if not has_hand:
+                x = int(base_x)
+                brightness = min(255, 92 + int(drop * 120))
+                color = (brightness, brightness, brightness)
+                cv.line(frame, (x, 0), (x, self.height), color, 1, cv.LINE_AA)
+                continue
+
             points = []
 
             for point_index in range(point_count):
                 y = (point_index / (point_count - 1)) * self.height
-                wave_a = 0
-                wave_b = 0
-                if has_hand:
-                    wave_a = math.sin(y * 0.018 + elapsed * motion +
-                                      line_index * 0.22)
-                    wave_b = math.sin(y * 0.041 - elapsed * 0.45 +
-                                      line_index * 0.17)
+                wave_a = math.sin(y * 0.018 + elapsed * motion +
+                                  line_index * 0.22)
+                wave_b = math.sin(y * 0.041 - elapsed * 0.45 +
+                                  line_index * 0.17)
 
                 distance_x = (base_x - hand_x) / max(self.width, 1)
                 distance_y = (y - hand_y) / max(self.height, 1)
@@ -119,12 +122,10 @@ class TechnoVisualizer:
                 pressure_wave = math.sin((distance_x + distance_y) * math.pi * 9 +
                                          elapsed * 3.2)
 
-                hand_bend = 0
-                if has_hand:
-                    attraction = pull_to_hand * hand_pull * 2.4
-                    ripple = (vertical_ripple * 35 + pressure_wave * 20) * (
-                        0.25 + pinch)
-                    hand_bend = influence * (attraction + ripple)
+                attraction = pull_to_hand * hand_pull * 2.4
+                ripple = (vertical_ripple * 35 + pressure_wave * 20) * (
+                    0.25 + pinch)
+                hand_bend = influence * (attraction + ripple)
 
                 x = (base_x + wave_a * bend_strength +
                      wave_b * bend_strength * 0.45 + hand_bend)
